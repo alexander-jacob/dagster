@@ -14,6 +14,7 @@ import {
 } from '../workspace/WorkspaceContext';
 import {buildRepoAddress} from '../workspace/buildRepoAddress';
 import {repoAddressAsString} from '../workspace/repoAddressAsString';
+import {repoAddressFromPath} from '../workspace/repoAddressFromPath';
 import {RepoAddress} from '../workspace/types';
 import {workspacePathFromAddress} from '../workspace/workspacePath';
 
@@ -80,8 +81,13 @@ export const FlatContentList: React.FC<Props> = (props) => {
           <JobItem
             key={`${job.name}-${repoAddressAsString(job.repoAddress)}`}
             job={job}
-            repoPath={repoPath}
-            selector={selector}
+            active={
+              !!(
+                repoPath &&
+                job.repoAddress === repoAddressFromPath(repoPath) &&
+                selector === job.name
+              )
+            }
           />
         ))}
       </Items>
@@ -129,115 +135,111 @@ export const getJobItemsForOption = (option: DagsterRepoOption) => {
 };
 
 interface JobItemProps {
+  active: boolean;
   job: JobItemType;
-  repoPath?: string;
-  selector?: string;
 }
 
-export const JobItem: React.FC<JobItemProps> = (props) => {
-  const {job: jobItem, repoPath, selector} = props;
-  const {name, label, path, repoAddress, schedules, sensors} = jobItem;
+export const JobItem = React.forwardRef(
+  (props: JobItemProps, ref: React.ForwardedRef<HTMLDivElement>) => {
+    const {active, job: jobItem} = props;
+    const {label, path, repoAddress, schedules, sensors} = jobItem;
 
-  const [showDialog, setShowDialog] = React.useState(false);
+    const [showDialog, setShowDialog] = React.useState(false);
 
-  const jobRepoPath = repoAddressAsString(repoAddress);
+    const icon = () => {
+      const scheduleCount = schedules.length;
+      const sensorCount = sensors.length;
 
-  const icon = () => {
-    const scheduleCount = schedules.length;
-    const sensorCount = sensors.length;
-
-    if (!scheduleCount && !sensorCount) {
-      return null;
-    }
-
-    const whichIcon = scheduleCount ? 'schedule' : 'sensors';
-    const needsDialog = scheduleCount > 1 || sensorCount > 1 || (scheduleCount && sensorCount);
-
-    const status = () => {
-      return schedules.some(
-        (schedule) => schedule.scheduleState.status === InstigationStatus.RUNNING,
-      ) || sensors.some((sensor) => sensor.sensorState.status === InstigationStatus.RUNNING)
-        ? InstigationStatus.RUNNING
-        : InstigationStatus.STOPPED;
-    };
-
-    const tooltipContent = () => {
-      if (scheduleCount && sensorCount) {
-        const scheduleString = scheduleCount > 1 ? `${scheduleCount} schedules` : '1 schedule';
-        const sensorString = sensorCount > 1 ? `${sensorCount} sensors` : '1 sensor';
-        return `${scheduleString}, ${sensorString}`;
+      if (!scheduleCount && !sensorCount) {
+        return null;
       }
 
-      if (scheduleCount) {
-        return scheduleCount === 1 ? (
+      const whichIcon = scheduleCount ? 'schedule' : 'sensors';
+      const needsDialog = scheduleCount > 1 || sensorCount > 1 || (scheduleCount && sensorCount);
+
+      const status = () => {
+        return schedules.some(
+          (schedule) => schedule.scheduleState.status === InstigationStatus.RUNNING,
+        ) || sensors.some((sensor) => sensor.sensorState.status === InstigationStatus.RUNNING)
+          ? InstigationStatus.RUNNING
+          : InstigationStatus.STOPPED;
+      };
+
+      const tooltipContent = () => {
+        if (scheduleCount && sensorCount) {
+          const scheduleString = scheduleCount > 1 ? `${scheduleCount} schedules` : '1 schedule';
+          const sensorString = sensorCount > 1 ? `${sensorCount} sensors` : '1 sensor';
+          return `${scheduleString}, ${sensorString}`;
+        }
+
+        if (scheduleCount) {
+          return scheduleCount === 1 ? (
+            <div>
+              Schedule: <strong>{humanCronString(schedules[0].cronSchedule)}</strong>
+            </div>
+          ) : (
+            `${scheduleCount} schedules`
+          );
+        }
+
+        return sensorCount === 1 ? (
           <div>
-            Schedule: <strong>{humanCronString(schedules[0].cronSchedule)}</strong>
+            Sensor: <strong>{sensors[0].name}</strong>
           </div>
         ) : (
-          `${scheduleCount} schedules`
+          `${sensorCount} sensors`
         );
-      }
+      };
 
-      return sensorCount === 1 ? (
-        <div>
-          Sensor: <strong>{sensors[0].name}</strong>
-        </div>
-      ) : (
-        `${sensorCount} sensors`
-      );
-    };
-
-    const link = () => {
-      const icon = (
-        <Icon
-          name={whichIcon}
-          color={status() === InstigationStatus.RUNNING ? Colors.Green500 : Colors.Gray600}
-        />
-      );
-
-      if (needsDialog) {
-        return (
-          <SensorScheduleDialogButton onClick={() => setShowDialog(true)}>
-            {icon}
-          </SensorScheduleDialogButton>
+      const link = () => {
+        const icon = (
+          <Icon
+            name={whichIcon}
+            color={status() === InstigationStatus.RUNNING ? Colors.Green500 : Colors.Gray600}
+          />
         );
-      }
 
-      const path = scheduleCount
-        ? `/schedules/${schedules[0].name}`
-        : `/sensors/${sensors[0].name}`;
-      return <Link to={workspacePathFromAddress(repoAddress, path)}>{icon}</Link>;
+        if (needsDialog) {
+          return (
+            <SensorScheduleDialogButton onClick={() => setShowDialog(true)}>
+              {icon}
+            </SensorScheduleDialogButton>
+          );
+        }
+
+        const path = scheduleCount
+          ? `/schedules/${schedules[0].name}`
+          : `/sensors/${sensors[0].name}`;
+        return <Link to={workspacePathFromAddress(repoAddress, path)}>{icon}</Link>;
+      };
+
+      return (
+        <>
+          <IconWithTooltip content={tooltipContent()}>{link()}</IconWithTooltip>
+          {needsDialog ? (
+            <ScheduleAndSensorDialog
+              isOpen={showDialog}
+              onClose={() => setShowDialog(false)}
+              repoAddress={repoAddress}
+              schedules={schedules}
+              sensors={sensors}
+              showSwitch
+            />
+          ) : null}
+        </>
+      );
     };
 
     return (
-      <>
-        <IconWithTooltip content={tooltipContent()}>{link()}</IconWithTooltip>
-        {needsDialog ? (
-          <ScheduleAndSensorDialog
-            isOpen={showDialog}
-            onClose={() => setShowDialog(false)}
-            repoAddress={repoAddress}
-            schedules={schedules}
-            sensors={sensors}
-            showSwitch
-          />
-        ) : null}
-      </>
+      <ItemContainer ref={ref}>
+        <Item $active={active} to={path}>
+          <div>{label}</div>
+        </Item>
+        {icon()}
+      </ItemContainer>
     );
-  };
-
-  return (
-    <ItemContainer>
-      <Item
-        className={`${name === selector && repoPath === jobRepoPath ? 'selected' : ''}`}
-        to={path}
-      >
-        <div>{label}</div>
-      </Item>
-      {icon()}
-    </ItemContainer>
-  );
-};
+  },
+);
 
 const Label = styled.div<{$hasIcon: boolean}>`
   display: flex;
